@@ -1,0 +1,27 @@
+#!/usr/bin/env bash  
+
+if [[ ${VERBOSE} == yes ]]
+then
+  debug "${YELLOW}[ ${LIME}$(echo $(caller | awk '{print $2}') | awk -F\/ '{print $NF}') ${YELLOW}calls (in line: ${LIME}$(caller | awk '{print $1}')${YELLOW}) ${LIME}$(echo ${BASH_SOURCE} | awk -F\/ '{print $NF}')${YELLOW} ]"
+fi
+
+IFS=${ORIGIFS}
+
+SLACK_PAYLOAD="
+{\\\"channel\\\": \\\"${SLACK_CHANNEL_AWS}\\\"
+  , \\\"username\\\": \\\"${USER}, (${YOUR_IP})\\\"
+  , \\\"icon_emoji\\\": \\\":watch:\\\"
+  , \\\"attachments\\\":
+    [
+      {
+        \\\"fallback\\\": \\\"AWS Event Rule: ${EVENT_BRIDGE_RULE_NAME} with schedule: ${EVENT_BRIDGE_RULE_NAME_CRON}\\\",
+        \\\"color\\\": \\\"good\\\",
+        \\\"title\\\": \\\"AWS EventBridge notification:\\\",
+        \\\"text\\\": \\\"Rule: *${EVENT_BRIDGE_RULE_NAME}* has been deployed\\\"
+      }
+    ]
+, \\\"token\\\": \\\"${SLACK_TOKEN}\\\"
+}" 
+
+echo "curl ${SLACK_PROXY_CONTROL[*]} -v -X POST --data \"${SLACK_PAYLOAD}\" ${SLACK_WEB_HOOK}" > "${TMP}/${EVENT_BRIDGE_RULE_NAME}_slack_eventrule.in"
+source "${TMP}/${EVENT_BRIDGE_RULE_NAME}_slack_eventrule.in" > "${LOG}/${EVENT_BRIDGE_RULE_NAME}_slack_eventrule.log" 2>&1

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash  
+
+if [[ ${VERBOSE} == yes ]]
+then
+  debug "${YELLOW}[ ${LIME}$(echo $(caller | awk '{print $2}') | awk -F\/ '{print $NF}') ${YELLOW}calls (in line: ${LIME}$(caller | awk '{print $1}')${YELLOW}) ${LIME}$(echo ${BASH_SOURCE} | awk -F\/ '{print $NF}')${YELLOW} ]"
+fi
+
+IFS=${ORIGIFS}
+
+SLACK_PAYLOAD="
+{\\\"channel\\\": \\\"${SLACK_CHANNEL_AWS}\\\"
+  , \\\"username\\\": \\\"${USER}, (${YOUR_IP})\\\"
+  , \\\"icon_emoji\\\": \\\":on:\\\"
+  , \\\"attachments\\\":
+    [
+      {
+        \\\"fallback\\\": \\\"Event target: ${EVENT_BRIDGE_TARGET_ID}${CYAN} has been added to rule:  ${EVENT_BRIDGE_RULE_NAME}\\\",
+        \\\"color\\\": \\\"good\\\",
+        \\\"title\\\": \\\"AWS EventBridge notification:\\\",
+        \\\"text\\\": \\\"Event target: *${EVENT_BRIDGE_TARGET_ID}* has been added to rule: *${EVENT_BRIDGE_RULE_NAME}*\\\"
+      }
+    ]
+, \\\"token\\\": \\\"${SLACK_TOKEN}\\\"
+}" 
+
+echo "curl ${SLACK_PROXY_CONTROL[*]} -v -X POST --data \"${SLACK_PAYLOAD}\" ${SLACK_WEB_HOOK}" > "${TMP}/${RANDOM_ID_GEN}_slack_eventbridge_target.in"
+source "${TMP}/${RANDOM_ID_GEN}_slack_eventbridge_target.in" > "${LOG}/${RANDOM_ID_GEN}_slack_eventbridge_target.log" 2>&1
