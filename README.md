@@ -66,7 +66,29 @@ And also:
   - all volumes
   - all keypairs
   - leaving only own AMIs, and S3 buckets
-  
+
+## parameters:
+
+Each script without any parameter will throw help, but:
+### aws_info
+  - [-o]  OUTPUT directory - where to store ALL LOGs and TEMP files (default directory is: /${HOME}/var and TMP and LOG are subdirectories to var)
+  - [-p]  [mandatory outside AWS env] - PROFILE name stored in ~/.aws/config
+  - [-C]  CLEANING (WARNING) - removing all running/stopped instance(s) (terminates them) and all volumes and snapshots
+  - [-x]  only works with [-C] - CLEANING (WARNING) - removes: S3 buckets (only empty), Lambda functions, events-busses etc., event rules, Keys etc
+  - [-v]  verbose
+###aws_deploy
+  - those from aws_info except [-C] and [-x]
+  - [-E]  deployment of EC2 instance
+  - [-L]  deployment of Lambda function with EventBridge schedule
+  - [-u]  [optional] - username on remote system which runs commands (if ommited, then "${USER}" is picked up)
+  - [-R]  [optional] - run code remotely on just created EC2 instance
+  - [-A]  [optional] - AMI_ID         (if ommited, then the newest OWN is picked up)
+                     - example: Red Hat Enterprise Linux 8 (HVM), SSD Volume Type (ami-032e5b6af8a711f30) - for eu-west-1 AZ
+                     - example: Amazon Linux 2 AMI (HVM), SSD Volume Type (ami-0ce1e3f77cd41957e) - for eu-west-1 AZ
+                     - example: CentOS 7 (x86_64) - with Updates HVM (ami-05a178e6f938f2c39) - for eu-west-1 AZ
+                     - example of find: "aws --profile saml ec2 describe-images --filters "Name=description,Values=CentOS 7*" | jq '.Images[].Description'"
+  - [-I]  [optional] - INSTANCE_TYPE  (if ommited, then "t3.xlarge" is picked up)
+ 
 ## AWS extra addons
 
 - SSM agent manual installation:
@@ -92,6 +114,42 @@ And also:
 - *[slack emoji](https://www.webfx.com/tools/emoji-cheat-sheet)*
 - *[markdown guide](https://www.markdownguide.org/basic-syntax)*
 
+* __* lambda name has been changed to be used more then one - accordingly to destination scripts__
+
+    [Kamil Czarnecki](kamoyl@outlook.com) - Wed, 13 Jan 2021 13:13:45 +0100
+    
+    * configuration table is now three columns where two of them are lambda pythin
+    script and bash script runs by it
+    
+    * there were lots of weirdissues related to IFS - which all of them is globally
+    corrected now
+    
+    * more and more redirection to logs and temporary files accordingly if it is
+    about output or errors
+    
+    * corrected OpenSSH fingerprint comparison to AWS SSH2 fingerptint - to NOT to
+    create endlesly keys if they exists already
+    
+    * added ToDo into README and update it
+    
+    * checking if: ** event is already created, ** if permissions from EventBridge
+    to Lambda are appropriately assigned and created, ** event name is uniq, ** if
+    event rule is already created, ** if targets exists
+    
+    * changed orger of creating zip package for lambda to do it ONLY after creating
+    lambda
+    
+    * updated README, and Changelog
+    
+    * some small changes and cleaning
+    
+
+* __Changelog__
+
+    [Kamil Czarnecki](kamoyl@outlook.com) - Thu, 7 Jan 2021 21:27:58 +0100
+    
+    
+
 * __* slow change to separation error logs from output files__
 
     [Kamil Czarnecki](kamoyl@outlook.com) - Thu, 7 Jan 2021 21:26:25 +0100
@@ -99,6 +157,12 @@ And also:
     * added permissions and trust to events for run lambda function
     
     * corrected output file which overwrites event rules
+    
+
+* __* slow change to separation error logs from output files__
+
+    [Kamil Czarnecki](kamoyl@outlook.com) - Thu, 7 Jan 2021 21:21:01 +0100
+    
     
 
 * __Changelog__
