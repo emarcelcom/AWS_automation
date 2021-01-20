@@ -114,6 +114,42 @@ Each script without any parameter will throw help, but:
 - *[slack emoji](https://www.webfx.com/tools/emoji-cheat-sheet)*
 - *[markdown guide](https://www.markdownguide.org/basic-syntax)*
 
+* __* updated Public IP entry__
+
+    [Kamil Czarnecki](kamoyl@outlook.com) - Thu, 14 Jan 2021 16:13:40 +0100
+    
+    * permi^Cions to logging and logging enabling to bucket is enabled and set
+    properly
+    
+    * taking care for security groups not needed during removing/terminating
+    instances
+    
+
+* __Update README.md__
+
+    [Kamil Czarnecki](kamoyl@outlook.com) - Thu, 14 Jan 2021 12:46:16 +0100
+    
+    
+
+* __Added buckets logging__
+
+    [Kamil Czarnecki](kamoyl@outlook.com) - Thu, 14 Jan 2021 12:42:49 +0100
+    
+    * preparation for buckets objects locking
+    
+
+* __Updated README__
+
+    [Kamil Czarnecki](kamoyl@outlook.com) - Wed, 13 Jan 2021 13:24:58 +0100
+    
+    
+
+* __Changelog__
+
+    [Kamil Czarnecki](kamoyl@outlook.com) - Wed, 13 Jan 2021 13:16:11 +0100
+    
+    
+
 * __* lambda name has been changed to be used more then one - accordingly to destination scripts__
 
     [Kamil Czarnecki](kamoyl@outlook.com) - Wed, 13 Jan 2021 13:13:45 +0100
