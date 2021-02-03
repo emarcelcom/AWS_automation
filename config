@@ -24,6 +24,9 @@ DARK_GREEN=$(echo -e "\x1b[38;2;50;200;100m")
 LIGHT_BLUE=$(echo -e "\x1b[38;2;50;200;240m")
 LIGHT_YELLOW=$(echo -e "\x1b[38;2;250;250;0m")
 
+#Internal Field Separator
+#debug "ORIGIFS=$' ^I\n'" #<space><tab><new line>
+#debug cat -etv <<<"$IFS"
 ORIGIFS=${IFS}
 NEWIFS=$'\n'
 
@@ -343,6 +346,54 @@ function SHOW_TIME ()
   fi
   #echo "${DAY}"d "${HOUR}"h "${MIN}"m "${SEC}"s
   echo "${HOUR}:${MIN}:${SEC}"
+}
+
+slack_notification()
+{
+COLLECTEDIFS=${IFS}
+IFS=${ORIGIFS}
+FUNCTION_NAME=${FUNCNAME[0]}
+  if [ $# -ne  7 ]
+  then
+    error "Function ${YELLOW}${FUNCTION_NAME}${RED} needs seven parameters: ${BLUE}(1)slack channel, (2) slack notification title, (3) slack notificatio text, (4)icon_emoji, (5) slack notification color, (6) footer url, (7) footer link"
+    failed
+  fi
+  SLACK_CHANNEL="${1}"
+  SLACK_NOTIFICATION_TITLE="${2}"
+  SLACK_NOTIFICATION_TEXT="${3}"
+  ICON_EMOJI="${4}"
+  SLACK_NOTIFICATION_COLOR="${5}"
+  FOOTER_URL="${6}"
+  FOOTER_LINK="${7}"
+  RANDOM_ID=$(cat /dev/urandom | tr -dc '0-9a-zA-Z' | fold -w 4 | head -n1)
+  SLACK_NOTIFICATION_MESSAGE="
+    {\\\"channel\\\": \\\"${SLACK_CHANNEL}\\\"
+      , \\\"username\\\": \\\"${USER}\\\"
+      , \\\"icon_emoji\\\": \\\"${ICON_EMOJI}\\\"
+      , \\\"color\\\": \\\"${SLACK_NOTIFICATION_COLOR}\\\"
+      , \\\"attachments\\\":
+        [
+          {
+            \\\"fallback\\\": \\\"${SLACK_NOTIFICATION_TEXT}\\\",
+            \\\"title\\\": \\\"${SLACK_NOTIFICATION_TITLE}\\\",
+            \\\"text\\\": \\\"${SLACK_NOTIFICATION_TEXT}\\\",
+            \\\"title_link\\\": \\\"${FOOTER_URL}\\\",
+            \\\"footer\\\": \\\"<${FOOTER_URL}|${FOOTER_LINK}>\\\"
+          }
+        ]
+      , \\\"token\\\": \\\"${SLACK_TOKEN}\\\"
+    }"
+  echo "curl ${SLACK_PROXY_CONTROL[*]} -v -X POST --data \"${SLACK_NOTIFICATION_MESSAGE}\" ${SLACK_WEB_HOOK}" > "${TMP}/slack_notification_${RANDOM_ID}.in"
+  source "${TMP}/slack_notification_${RANDOM_ID}.in" > "${LOG}/slack_notification_${RANDOM_ID}.log" 2>&1
+  ERROR_CODE=$?
+  if [ ${ERROR_CODE} -ne 0 ]
+  then
+    error "  Status sent to slack channel: ${YELLOW}${SLACK_CHANNEL}${RED} failed"
+  else
+    inf "  Status sent properly to slack channel: ${YELLOW}${SLACK_CHANNEL}"
+  fi
+IFS=${COLLECTEDIFS}
+sleep 3
 }
 
 debug "${YELLOW}[ ${LIME}$(echo $(caller | awk '{print $2}') | awk -F\/ '{print $NF}') ${YELLOW}calls (in line: ${LIME}$(caller | awk '{print $1}')${YELLOW}) ${LIME}$(echo ${BASH_SOURCE} | awk -F\/ '{print $NF}')${YELLOW} ]"

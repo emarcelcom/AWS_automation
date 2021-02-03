@@ -289,6 +289,7 @@ then
             inf "        and it is ${YELLOW}${AWS_S3_SNAPSHOT_DAYS}${CYAN} days old"
           fi
         done
+        IFS=${ORIGIFS}
       fi
       S3_SNAPSHOTS_AMOUNT=$(jq -r --arg aws_instance_vol ${AWS_INSTANCE_VOL} '.Snapshots[] | select(.VolumeId == $aws_instance_vol) | .SnapshotId' "${TMP}/${AWS_SNAPS_DETAILS}_full.json" | wc -l)
     done
@@ -455,6 +456,11 @@ inf ""
 inf "${MAGENTA}EC2 AMIs"
 if [ -s "${TMP}/${AWS_AMIS_DETAILS}_full.json" ] && [ ! -z $(jq -r '.Images[].ImageId' "${TMP}/${AWS_AMIS_DETAILS}_full.json" | head -n1) ]
 then
+  debug "  #### TESTING - amount of AMIs: ${WINE}${AWS_AMI_IMAGE_AMOUNT}${BLUE} ####"
+  aws_newest_ami
+  #ToDo: automatically remove older AMI if more then 2
+  #ToDo:add a lambda process once a week/month to create newest API
+  #aws ec2 create-image --instance-id $(cat /sys/devices/virtual/dmi/id/board_asset_tag) --name "td_jenkins_v34" --description "only for testing purposes"
   for AWS_AMI_IMAGE_ID in $(jq -r '.Images[].ImageId' "${TMP}/${AWS_AMIS_DETAILS}_full.json")
   do
     AWS_AMI_NAME=$(jq -r --arg image_id ${AWS_AMI_IMAGE_ID} '.Images[] | select(.ImageId == $image_id) | .Name' "${TMP}/${AWS_AMIS_DETAILS}_full.json")
@@ -512,11 +518,17 @@ then
       if [[ ${AWS_ZONE} == "Y" ]]
       then
         inf "    Mounting locally S3 buckets"
-        for BUCKET in ${AWS_S3_BUCKETS[*]}
-        do 
-          sudo mkdir -p /media/${BUCKET}
-          sudo s3fs ${BUCKET} /media/${BUCKET} -o iam_role=${CHECKED_INSTANCE_PROFILE_ROLE},allow_other,use_cache=/tmp/cache,default_acl=public-read,uid=30006,gid=30006
-        done
+        #for BUCKET in ${AWS_S3_BUCKETS[*]}
+        #do 
+          S3_BUCKET_MOUNT_CHECK=$(mount  | grep s3fs | grep -w ${S3_BUCKET} | awk '{print $3}')
+          if [ -z ${S3_BUCKET_MOUNT_CHECK} ]
+          then
+            sudo mkdir -p /media/${S3_BUCKET}
+            sudo s3fs ${S3_BUCKET} /media/${S3_BUCKET} -o iam_role=${CHECKED_INSTANCE_PROFILE_ROLE},allow_other,use_cache=/tmp/cache,default_acl=public-read,uid=30006,gid=30006
+          else
+            inf "      Bucket: ${YELLOW}${S3_BUCKET}${CYAN} is already mounted"
+          fi
+        #done
       fi
     ) &
   done
@@ -658,8 +670,8 @@ then
       AWS_IAM_POLICY_ARN="$(jq -r --arg aws_iam_policy_name ${AWS_IAM_POLICY_NAME} '.Policies[] | select(.PolicyName == $aws_iam_policy_name) | .Arn' "${TMP}/${AWS_POLICIES}_full.json")"
       AWS_IAM_POLICY_ID=$(jq -r --arg aws_iam_policy_name ${AWS_IAM_POLICY_NAME} '.Policies[] | select(.PolicyName == $aws_iam_policy_name) | .PolicyId' "${TMP}/${AWS_POLICIES}_full.json")
       inf "  Policy: ${YELLOW}${AWS_IAM_POLICY_NAME}${CYAN}, with ARN: ${LIME}${AWS_IAM_POLICY_ARN}${CYAN} exists"
-      AWS_IAM_POLICY_NAME=$(aws_list-entities-for-policy "${AWS_IAM_POLICY_ARN}" && jq -r '.PolicyRoles[].RoleName' ${TMP}/${AWS_POLICY_ENTITIES}_${AWS_POLICY_NAME}_full.json)
-      if [ -z ${AWS_IAM_POLICY_NAME} ]
+      AWS_IAM_POLICY_ROLENAME_CHECK=$(aws_list-entities-for-policy "${AWS_IAM_POLICY_ARN}" && jq -r '.PolicyRoles[].RoleName' ${TMP}/${AWS_POLICY_ENTITIES}_${AWS_IAM_POLICY_NAME}_full.json | head -n1)
+      if [ -z ${AWS_IAM_POLICY_NAME_CHECK} ]
       then
         inf "    and it is not attached to any role"
         if [[ ${CLEANING} == yes ]] && [[ ${XTRA_CLEANING} == yes ]]
@@ -667,22 +679,25 @@ then
           aws_policy_removal "${AWS_IAM_POLICY_ARN}"
         fi
       else
-        inf "    and it is attached to the role: ${YELLOW}${AWS_IAM_POLICY_NAME}"
-        if [[ ${CLEANING} == yes ]] && [[ ${XTRA_CLEANING} == yes ]] && [[ ${AWS_ZONE} == "N" ]]
-        then
-          aws_detaching_policy_from_role ${AWS_IAM_POLICY_NAME} "${AWS_IAM_POLICY_ARN}"
-          aws_policy_removal "${AWS_IAM_POLICY_ARN}"
-          inf "      ${MAGENTA}Checking if role: ${YELLOW}${AWS_IAM_POLICY_NAME}${MAGENTA} is added to any instance profile..."
-          INSTANCE_PROFILE_ROLE_NAME=$(aws_list-instance-profiles-for-role "${AWS_IAM_POLICY_NAME}" && jq -r '.InstanceProfiles[].InstanceProfileName' "${TMP}/${AWS_INSTANCE_PROFILES}_${AWS_IAM_POLICY_NAME}_full.json")
-          if [ -z ${INSTANCE_PROFILE_ROLE_NAME} ]
+        for AWS_IAM_ROLENAME in $(jq -r '.PolicyRoles[].RoleName' ${TMP}/${AWS_POLICY_ENTITIES}_${AWS_IAM_POLICY_NAME}_full.json)
+        do
+          inf "    and it is attached to the role: ${YELLOW}${AWS_IAM_POLICY_NAME}"
+          if [[ ${CLEANING} == yes ]] && [[ ${XTRA_CLEANING} == yes ]] && [[ ${AWS_ZONE} == "N" ]]
           then
-            aws_role_removal "${AWS_IAM_POLICY_NAME}"
-          else
-            aws_removing_role_from_instance_profile "${AWS_IAM_POLICY_NAME}" "${INSTANCE_PROFILE_ROLE_NAME}"
-            aws_role_removal "${AWS_IAM_POLICY_NAME}"
-            aws_instance-profile_removal "${INSTANCE_PROFILE_ROLE_NAME}"
+            aws_detaching_policy_from_role ${AWS_IAM_POLICY_NAME} "${AWS_IAM_POLICY_ARN}"
+            aws_policy_removal "${AWS_IAM_POLICY_ARN}"
+            inf "      ${MAGENTA}Checking if role: ${YELLOW}${AWS_IAM_POLICY_NAME}${MAGENTA} is added to any instance profile..."
+            INSTANCE_PROFILE_ROLE_NAME=$(aws_list-instance-profiles-for-role "${AWS_IAM_POLICY_NAME}" && jq -r '.InstanceProfiles[].InstanceProfileName' "${TMP}/${AWS_INSTANCE_PROFILES}_${AWS_IAM_POLICY_NAME}_full.json")
+            if [ -z ${INSTANCE_PROFILE_ROLE_NAME} ]
+            then
+              aws_role_removal "${AWS_IAM_POLICY_NAME}"
+            else
+              aws_removing_role_from_instance_profile "${AWS_IAM_POLICY_NAME}" "${INSTANCE_PROFILE_ROLE_NAME}"
+              aws_role_removal "${AWS_IAM_POLICY_NAME}"
+              aws_instance-profile_removal "${INSTANCE_PROFILE_ROLE_NAME}"
+            fi
           fi
-        fi
+        done
       fi
     done
   else
@@ -738,14 +753,14 @@ then
       inf "  Log group: ${BROWN}${AWS_LOG_NAME}"
 
       RETENTION_LOGS_CHECKING=$(jq -r --arg aws_log_name ${AWS_LOG_NAME} '.logGroups[] | select(.logGroupName == $aws_log_name) | .retentionInDays' "${TMP}/${AWS_LOGS}_full.json")
-      if [ -z ${RETENTION_LOGS_CHECKING} ] || [ ${RETENTION_LOGS_CHECKING} -ne ${AWS_LOGS_RETENTION_DAYS} ]
+      if [[ ${RETENTION_LOGS_CHECKING} == null ]] || [ -z ${RETENTION_LOGS_CHECKING} ] || [ ${RETENTION_LOGS_CHECKING} -ne ${AWS_LOGS_RETENTION_DAYS} ]
       then
         inf "    Rentention policy to log group: ${BROWN}${AWS_LOG_NAME}${CYAN} for ${LIGHT_BLUE}${AWS_LOGS_RETENTION_DAYS}${CYAN} days must be applied"
         aws ${AWS_PROFILE_USE_CHECK[*]} logs put-retention-policy --log-group-name ${AWS_LOG_NAME} --retention-in-days ${AWS_LOGS_RETENTION_DAYS} > "${TMP}/${AWS_LOGS}_${AWS_LOGS_NAME}_group_retention.json" 2> "${LOG}/${AWS_LOGS}_${AWS_LOGS_NAME}_group_retention.log"
         ERROR_CODE="$?"
         if [ ${ERROR_CODE} -eq 0 ]
         then
-          debug "      Rentention policy ${LIGHT_BLUE}${AWS_LOGS_RETENTION_DAYS}${BLUE} applied properly"
+          debug "      Rentention policy ${LIGHT_BLUE}${AWS_LOGS_RETENTION_DAYS}${BLUE} days applied properly"
         else
           error "      Rentention policy ${LIGHT_BLUE}${AWS_LOGS_RETENTION_DAYS}${RED} cannot be applied"
           debug "        LOG_FILE=${LOG}/${AWS_LOGS}_${AWS_LOGS_NAME}_group_retention.log"
@@ -809,6 +824,7 @@ else
       AWS_SERVICE_COSTS=$(echo ${AWS_SERVICE_COST_LINE} | awk -F\~ '{print $2}')
       debug "      ${MAGENTA}${AWS_SERVICE}${BLUE}- ${LIGHT_YELLOW}${AWS_SERVICE_COSTS} USD"
     done
+    IFS=${ORIGIFS}
   fi
   inf "  current year (${BROWN}${CURRENT_YEAR}${CYAN}): ${LIGHT_YELLOW}${CURRENT_YEAR_COSTS} USD"
 fi
