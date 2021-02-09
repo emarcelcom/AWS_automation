@@ -89,6 +89,7 @@ AWS_VOLS_DETAILS="aws_EC2_vols_${CURRENT_TIMESTAMP}"
 AWS_VPCS="aws_vpcs_${CURRENT_TIMESTAMP}"
 AWS_SNS_TOPICS="aws_sns-topics_${CURRENT_TIMESTAMP}"
 AWS_SNS_SUBSC="aws_sns-sunscriptions_${CURRENT_TIMESTAMP}"
+AWS_KMS_ALIASES="aws_kms_aliases_${CURRENT_TIMESTAMP}"
 SECURITY_GROUP_LAMBDA_NAME="${AWS_COMMON_NAME}_lambda_ec2-sec_group"
 if [ ! -z ${EXTERNAL_INET_IP} ]
 then
@@ -295,10 +296,9 @@ aws_key_removal()
 
 aws_newest_ami()
 {
-  inf ""
-  inf "${MAGENTA}Trying to figure it out the newest AMI:"
   if [ -s "${TMP}/${AWS_AMIS_DETAILS}_full.json" ]
   then
+    inf "Trying to figure it out the newest AMI:"
     AWS_AMI_IMAGE_AMOUNT=$(jq -r '.Images[].ImageId' "${TMP}/${AWS_AMIS_DETAILS}_full.json" | wc -l)
     LATEST_AMI_ID=$(jq -r '.Images[] | .CreationDate + " " + .ImageId' "${TMP}/${AWS_AMIS_DETAILS}_full.json" | sort | tail -n1 | awk '{print $2}')
     OLDEST_AMI_ID=$(jq -r '.Images[] | .CreationDate + " " + .ImageId' "${TMP}/${AWS_AMIS_DETAILS}_full.json" | sort | head -n1 | awk '{print $2}')
@@ -307,16 +307,16 @@ aws_newest_ami()
     if [[ ${IMAGE_STATE} == "available" ]]
     then
       AWS_AMI_ID="${LATEST_AMI_ID}"
-      inf "    And it is available..."
+      inf "    And it is ${GREEN}available${CYAN}..."
     elif [[ ${IMAGE_STATE} == "failed"  ]]
     then
-      error "    Image: ${BROWN}${LATEST_AMI_ID}${RED} is in a state: failed"
+      error "    Image: ${BROWN}${LATEST_AMI_ID}${RED} is in a state: ${RED}failed"
       AMI_FAILED_REASON=$(jq -r --arg ImageId ${LATEST_AMI_ID} '.Images[] | select(.ImageId == $ImageId) | .StateReason.Code' "${TMP}/${AWS_AMIS_DETAILS}_full.json")
       error "      Reason: ${WINE}${AMI_FAILED_REASON}"
       failed
     elif [[ ${IMAGE_STATE} == "pending"  ]]
     then
-      warn "    Image: ${BROWN}${LATEST_AMI_ID}${WINE} is in status pending, waiting for state change"
+      warn "    Image: ${BROWN}${LATEST_AMI_ID}${WINE} is in status ${ORANGE}pending${WINE}, waiting for state change"
       while [[ $(aws ${AWS_PROFILE_USE_CHECK[*]} ec2 describe-images ${AWS_PROFILE_USE_CHECK[*]} --image-ids  ${LATEST_AMI_ID} | jq -r '.Images[].State') == "available" ]]
       do
         for NUMBER in {1..100}
@@ -329,11 +329,14 @@ aws_newest_ami()
     fi
     if [ ${AWS_AMI_IMAGE_AMOUNT} -ge 3 ]
     then
-      debug "      And the oldest seems to be this one: ${BROWN}${OLDEST_AMI_ID}"
+      debug "      And the oldest seems to be this one: ${BROWN}${OLDEST_AMI_ID}${BLUE}, among: ${BROWN}${AWS_AMI_IMAGE_AMOUNT}"
+      if [[ ${CLEANING} == yes ]] && [[ ${XTRA_CLEANING} == yes ]]
+      then
+        aws ${AWS_PROFILE_USE_CHECK[*]} ec2 deregister-image --image-id ${OLDEST_AMI_ID} > "${TMP}/${AWS_AMIS_DETAILS}_${OLDEST_AMI_ID}_rm.json" 2> "${LOG}/${AWS_AMIS_DETAILS}_${OLDEST_AMI_ID}_rm.log"
+      fi
     fi
   else
     error "  There is no AMI(s), exitting"
-    #ToDo: picking up examples AMI: 
     failed
   fi
 }
@@ -354,17 +357,18 @@ aws_list-roles()
       jq -r --arg aws_default_name ${AWS_DEFAULT_NAME} '.Roles[] | select(.Arn | contains("aws-service-role") | not) | select(.Arn | contains($aws_default_name) | not)' "${TMP}/${AWS_ROLES}_full.json" > "${TMP}/${AWS_ROLES}_${AWS_NAMES_PREFIX}_full.json" 2>"${LOG}/${AWS_ROLES}_${AWS_NAMES_PREFIX}.log"
       for AWS_IAM_ROLE_NAME in $(jq -r '.RoleName' "${TMP}/${AWS_ROLES}_${AWS_NAMES_PREFIX}_full.json")
       do
+        (
         AWS_IAM_ROLE_ARN="$(jq -r --arg aws_iam_role_name ${AWS_IAM_ROLE_NAME} '.Roles[] | select(.RoleName == $aws_iam_role_name) | .Arn' "${TMP}/${AWS_ROLES}_full.json")"
         AWS_IAM_ROLE_ID=$(jq -r --arg aws_iam_role_name ${AWS_IAM_ROLE_NAME} '.Roles[] | select(.RoleName == $aws_iam_role_name) | .RoleId' "${TMP}/${AWS_ROLES}_full.json")
         inf "  Role: ${YELLOW}${AWS_IAM_ROLE_NAME}${CYAN}, with ARN: ${LIME}${AWS_IAM_ROLE_ARN}${CYAN} exists"
         AWS_IAM_POLICY_NAME_CHECK=$(aws_list-attached-role-policies ${AWS_IAM_ROLE_NAME} && jq -r '.AttachedPolicies[].PolicyName' "${TMP}/${AWS_POLICIES_ATTACHED_ROLE}_${AWS_IAM_ROLE_NAME}_full.json" | head -n1)
         if [ -z ${AWS_IAM_POLICY_NAME_CHECK} ]
         then
-          inf "    and there is no policy attached to it"
+          inf "    role: ${YELLOW}${AWS_IAM_ROLE_NAME}${CYAN} has no policy attached to it"
           INSTANCE_PROFILE_ROLE_NAME=$(aws_list-instance-profiles-for-role "${AWS_IAM_ROLE_NAME}" && jq -r '.InstanceProfiles[].InstanceProfileName' "${TMP}/${AWS_INSTANCE_PROFILES}_${AWS_IAM_ROLE_NAME}_full.json")
           if [ ! -z ${INSTANCE_PROFILE_ROLE_NAME} ]
           then
-            inf "      and role: ${YELLOW}${INSTANCE_PROFILE_ROLE_NAME}${CYAN} is attached to instance profile: ${DARK_GREEN}${INSTANCE_PROFILE_ROLE_NAME}"
+            inf "      role: ${YELLOW}${INSTANCE_PROFILE_ROLE_NAME}${CYAN} is attached to instance profile: ${DARK_GREEN}${INSTANCE_PROFILE_ROLE_NAME}"
             if [[ ${CLEANING} == yes ]] && [[ ${XTRA_CLEANING} == yes ]] && [[ ${AWS_ZONE} == "N" ]]
             then
               aws_removing_role_from_instance_profile "${AWS_IAM_ROLE_NAME}" "${INSTANCE_PROFILE_ROLE_NAME}"
@@ -372,7 +376,7 @@ aws_list-roles()
               aws_instance-profile_removal "${INSTANCE_PROFILE_ROLE_NAME}"
             fi
           else
-	        inf "      and it is not attached to any instance profile"
+	        inf "      role: ${YELLOW}${AWS_IAM_ROLE_NAME}${CYAN} is not attached to any instance profile"
             if [[ ${CLEANING} == yes ]] && [[ ${XTRA_CLEANING} == yes ]]
             then
               aws_role_removal "${AWS_IAM_ROLE_NAME}"
@@ -382,7 +386,7 @@ aws_list-roles()
           for AWS_IAM_POLICY_NAME in $(jq -r '.AttachedPolicies[].PolicyName' "${TMP}/${AWS_POLICIES_ATTACHED_ROLE}_${AWS_IAM_ROLE_NAME}_full.json")
           do
             AWS_IAM_ROLE_POLICY_ARN=$(aws ${AWS_PROFILE_USE_CHECK[*]} iam list-policies | jq -r --arg policy_name ${AWS_IAM_POLICY_NAME} '.Policies[] | select(.PolicyName == $policy_name) | .Arn')
-            inf "    and there is a policy attached to it: ${YELLOW}${AWS_IAM_POLICY_NAME}${CYAN}, with ARN: ${LIME}${AWS_IAM_ROLE_POLICY_ARN}"
+            inf "    role: ${YELLOW}${AWS_IAM_ROLE_NAME}${CYAN} has a policy attached to it: ${YELLOW}${AWS_IAM_POLICY_NAME}${CYAN}, with ARN: ${LIME}${AWS_IAM_ROLE_POLICY_ARN}"
             if [[ ${CLEANING} == yes ]] && [[ ${XTRA_CLEANING} == yes ]] && [[ ${AWS_ZONE} == "N" ]]
             then
               aws_policy_removal "${AWS_IAM_ROLE_POLICY_ARN}"
@@ -390,7 +394,7 @@ aws_list-roles()
             INSTANCE_PROFILE_ROLE_NAME=$(aws_list-instance-profiles-for-role "${AWS_IAM_ROLE_NAME}" && jq -r '.InstanceProfiles[].InstanceProfileName' "${TMP}/${AWS_INSTANCE_PROFILES}_${AWS_IAM_ROLE_NAME}_full.json")
             if [ ! -z ${INSTANCE_PROFILE_ROLE_NAME} ]
             then
-              inf "      and role: ${YELLOW}${INSTANCE_PROFILE_ROLE_NAME}${CYAN} is attached to instance profile: ${DARK_GREEN}${INSTANCE_PROFILE_ROLE_NAME}"
+              inf "      role: ${YELLOW}${INSTANCE_PROFILE_ROLE_NAME}${CYAN} is attached to instance profile: ${DARK_GREEN}${INSTANCE_PROFILE_ROLE_NAME}"
               if [[ ${CLEANING} == yes ]] && [[ ${XTRA_CLEANING} == yes ]] && [[ ${AWS_ZONE} == "N" ]]
               then
                 aws_removing_role_from_instance_profile "${AWS_IAM_ROLE_NAME}" "${INSTANCE_PROFILE_ROLE_NAME}"
@@ -398,7 +402,7 @@ aws_list-roles()
                 aws_instance-profile_removal "${INSTANCE_PROFILE_ROLE_NAME}"
               fi
             else
-	          inf "      and it is not attached to any instance profile"
+	          warn "      role: ${YELLOW}${INSTANCE_PROFILE_ROLE_NAME}${WINE} is not attached to any instance profile"
               if [[ ${CLEANING} == yes ]] && [[ ${XTRA_CLEANING} == yes ]] && [[ ${AWS_ZONE} == "N" ]]
               then
                 aws_role_removal "${AWS_IAM_ROLE_NAME}"
@@ -406,7 +410,9 @@ aws_list-roles()
             fi
           done
         fi
+        ) &
       done
+      wait
     fi
   else
     error "  Roles couldn't be collected properly, exiting"
@@ -431,49 +437,52 @@ aws_list-profiles()
     else
       for INSTANCE_PROFILE_NAME in $(jq -r '.InstanceProfiles[].InstanceProfileName' "${TMP}/${AWS_INSTANCE_PROFILES}_full.json")
       do
-        inf "  profile: ${YELLOW}${INSTANCE_PROFILE_NAME}${CYAN} exists"
-        INSTANCE_PROFILE_ROLE_NAME=$(aws ${AWS_PROFILE_USE_CHECK[*]} iam get-instance-profile --instance-profile-name ${INSTANCE_PROFILE_NAME} | jq -r '.InstanceProfile.Roles[].RoleName')
-        if [ ! -z ${INSTANCE_PROFILE_ROLE_NAME} ]
-        then
-          for ROLE_NAME in ${INSTANCE_PROFILE_ROLE_NAME}
-          do
-            inf "    Role: ${YELLOW}${ROLE_NAME}${CYAN} is attached to instance profile: ${DARK_GREEN}${INSTANCE_PROFILE_NAME}"
-            AWS_IAM_POLICY_NAME=$(aws_list-attached-role-policies ${ROLE_NAME} && jq -r '.AttachedPolicies[].PolicyName' "${TMP}/${AWS_POLICIES_ATTACHED_ROLE}_${ROLE_NAME}_full.json")
-            if [ -z $(head -n1 <(echo ${AWS_IAM_POLICY_NAME})) ]
-            then
-              inf "      And role: ${YELLOW}${ROLE_NAME}${CYAN} has no policy attached"
-              if [[ ${CLEANING} == yes ]] && [[ ${XTRA_CLEANING} == yes ]] && [[ ${AWS_ZONE} == "N" ]]
+        (
+          inf "  profile: ${YELLOW}${INSTANCE_PROFILE_NAME}${CYAN} exists"
+          INSTANCE_PROFILE_ROLE_NAME=$(aws ${AWS_PROFILE_USE_CHECK[*]} iam get-instance-profile --instance-profile-name ${INSTANCE_PROFILE_NAME} | jq -r '.InstanceProfile.Roles[].RoleName')
+          if [ ! -z ${INSTANCE_PROFILE_ROLE_NAME} ]
+          then
+            for ROLE_NAME in ${INSTANCE_PROFILE_ROLE_NAME}
+            do
+              inf "    Role: ${YELLOW}${ROLE_NAME}${CYAN} is attached to instance profile: ${DARK_GREEN}${INSTANCE_PROFILE_NAME}"
+              AWS_IAM_POLICY_NAME=$(aws_list-attached-role-policies ${ROLE_NAME} && jq -r '.AttachedPolicies[].PolicyName' "${TMP}/${AWS_POLICIES_ATTACHED_ROLE}_${ROLE_NAME}_full.json")
+              if [ -z $(head -n1 <(echo ${AWS_IAM_POLICY_NAME})) ]
               then
-                aws_removing_role_from_instance_profile "${ROLE_NAME}" "${INSTANCE_PROFILE_NAME}"
-                aws_role_removal "${ROLE_NAME}"
-              fi
-            else
-              inf "      Role: ${YELLOW}${ROLE_NAME}${CYAN} has policy:"
-              for POLICY_NAME in $(jq -r '.AttachedPolicies[].PolicyName' "${TMP}/${AWS_POLICIES_ATTACHED_ROLE}_${ROLE_NAME}_full.json")
-              do
-                inf "        ${DARK_GREEN}${POLICY_NAME}${CYAN} attached to it"
+                inf "      And role: ${YELLOW}${ROLE_NAME}${CYAN} has no policy attached"
                 if [[ ${CLEANING} == yes ]] && [[ ${XTRA_CLEANING} == yes ]] && [[ ${AWS_ZONE} == "N" ]]
                 then
-                  POLICY_ARN=$(jq -r '.AttachedPolicies[].PolicyName' "${TMP}/${AWS_POLICIES_ATTACHED_ROLE}_${ROLE_NAME}_full.json")
-                  aws_policy_removal "${POLICY_ARN}"
                   aws_removing_role_from_instance_profile "${ROLE_NAME}" "${INSTANCE_PROFILE_NAME}"
                   aws_role_removal "${ROLE_NAME}"
                 fi
-              done
+              else
+                inf "      Role: ${YELLOW}${ROLE_NAME}${CYAN} has policy:"
+                for POLICY_NAME in $(jq -r '.AttachedPolicies[].PolicyName' "${TMP}/${AWS_POLICIES_ATTACHED_ROLE}_${ROLE_NAME}_full.json")
+                do
+                  inf "        ${DARK_GREEN}${POLICY_NAME}${CYAN} attached to it"
+                  if [[ ${CLEANING} == yes ]] && [[ ${XTRA_CLEANING} == yes ]] && [[ ${AWS_ZONE} == "N" ]]
+                  then
+                    POLICY_ARN=$(jq -r '.AttachedPolicies[].PolicyName' "${TMP}/${AWS_POLICIES_ATTACHED_ROLE}_${ROLE_NAME}_full.json")
+                    aws_policy_removal "${POLICY_ARN}"
+                    aws_removing_role_from_instance_profile "${ROLE_NAME}" "${INSTANCE_PROFILE_NAME}"
+                    aws_role_removal "${ROLE_NAME}"
+                  fi
+                done
+              fi
+            done
+            if [[ ${CLEANING} == yes ]] && [[ ${XTRA_CLEANING} == yes ]] && [[ ${AWS_ZONE} == "N" ]]
+            then
+              aws_instance-profile_removal "${INSTANCE_PROFILE_NAME}"
             fi
-          done
-          if [[ ${CLEANING} == yes ]] && [[ ${XTRA_CLEANING} == yes ]] && [[ ${AWS_ZONE} == "N" ]]
-          then
-            aws_instance-profile_removal "${INSTANCE_PROFILE_NAME}"
+          else
+            inf "    and there is no role attached to it"
+            if [[ ${CLEANING} == yes ]] && [[ ${XTRA_CLEANING} == yes ]] && [[ ${AWS_ZONE} == "N" ]]
+            then
+              aws_instance-profile_removal "${INSTANCE_PROFILE_NAME}"
+            fi
           fi
-        else
-          inf "    and there is no role attached to it"
-          if [[ ${CLEANING} == yes ]] && [[ ${XTRA_CLEANING} == yes ]] && [[ ${AWS_ZONE} == "N" ]]
-          then
-            aws_instance-profile_removal "${INSTANCE_PROFILE_NAME}"
-          fi
-        fi
+        ) &
       done
+      wait
     fi
   else
     error "  Instance profiles couldn't be collected properly, exiting"
@@ -519,24 +528,35 @@ aws_list-securitygroups()
 
 aws_AMI_create()
 {
-  if [ $# -ne 2 ]
+  if [ $# -ne 3 ]
   then
-    error "Function ${LIME}${FUNCNAME[0]}${RED} needs one parameter: ${YELLOW}(1)InstanceId, (2)AmiName"
+    error "Function ${LIME}${FUNCNAME[0]}${RED} needs three parameters: ${YELLOW}(1)InstanceId, (2)AmiName, (3)description"
     ERROR_CODE="1"
     failed
   else
     EC2_INSTANCE_ID="${1}"
     AMI_NAME=${2}
+    AMI_DESCRIPTION="${3}"
   fi
-  aws ${AWS_PROFILE_USE_CHECK[*]} ec2 create-image --instance-id ${EC2_INSTANCE_ID} --name "${AMI_NAME}_${CURRENT_TIMESTAMP}" --description "${AWS_NAMES_PREFIX} AMI" > "${TMP}/${AWS_AMIS_DETAILS}_${EC2_INSTANCE_ID}_full.json"
-  #ToDo: slack_notification (1)slack channel, (2) slack notification title, (3) slack notificatio text, (4)icon_emoji, (5) slack notification color, (6) footer url, (7) footer link
-  AMI_ID=$(jq -r 'ImageId' "${TMP}/${AWS_AMIS_DETAILS}_${EC2_INSTANCE_ID}_full.json")
-  if [[ ${AWS_OWNER_ID} == "623623120519" ]]
+  inf "${MAGENTA}Creating AMI, based on instance: ${YELLOW}${EC2_INSTANCE_ID}"
+  aws ${AWS_PROFILE_USE_CHECK[*]} ec2 create-image --instance-id ${EC2_INSTANCE_ID} --name "${AMI_NAME}_${CURRENT_TIMESTAMP}" --description ${AMI_DESCRIPTION} > "${TMP}/${AWS_AMIS_DETAILS}_${EC2_INSTANCE_ID}_full.json" 2>"${LOG}/${AWS_AMIS_DETAILS}_${EC2_INSTANCE_ID}.log"
+  ERROR_CODE="$?"
+  if [ ${ERROR_CODE} -eq 0 ]
   then
-    aws ${AWS_PROFILE_USE_CHECK[*]} ec2 modify-image-attribute --image-id ${AMI_ID} --launch-permission "Add=[{UserId=365117780834}]"
-  elif [[ ${AWS_OWNER_ID} == "365117780834" ]]
-  then
-    aws ${AWS_PROFILE_USE_CHECK[*]} ec2 modify-image-attribute --image-id ${AMI_ID} --launch-permission "Add=[{UserId=623623120519}]"
+    AMI_ID=$(jq -r '.ImageId' "${TMP}/${AWS_AMIS_DETAILS}_${EC2_INSTANCE_ID}_full.json")
+    inf "  AMI: ${YELLOW}${AMI_ID}${CYAN} has just been created"
+    slack_notification "${SLACK_CHANNEL_AWS}" "AMI: ${AMI_ID} created" "based on EC2 instance: ${EC2_INSTANCE_ID}" ":dvd:" "good" "${AWS_LOGIN_URL}" "AWS log in:"
+    if [[ ${AWS_OWNER_ID} == "623623120519" ]]
+    then
+      aws ${AWS_PROFILE_USE_CHECK[*]} ec2 modify-image-attribute --image-id ${AMI_ID} --launch-permission "Add=[{UserId=365117780834}]"
+    elif [[ ${AWS_OWNER_ID} == "365117780834" ]]
+    then
+      aws ${AWS_PROFILE_USE_CHECK[*]} ec2 modify-image-attribute --image-id ${AMI_ID} --launch-permission "Add=[{UserId=623623120519}]"
+    fi
+  else
+    error "  AMI cannot be created..."
+    debug "    LOG FILE: ${YELLOW}${LOG}/${AWS_AMIS_DETAILS}_${EC2_INSTANCE_ID}.log"
+    debug "      $(cat "${LOG}/${AWS_AMIS_DETAILS}_${EC2_INSTANCE_ID}.log")"
   fi
 }
 
@@ -576,6 +596,75 @@ aws_instance_removal()
     source "${TMP}/${AWS_INSTANCES_DETAILS}_${AWS_INSTANCE_ID}_termination_slack.in" > "${LOG}/${AWS_INSTANCES_DETAILS}_${AWS_INSTANCE_ID}_termination_slack.log" 2>&1
   else
     failed
+  fi
+}
+
+aws_instance_create()
+{
+  if [ $# -ne 5 ]
+  then
+    error "Function ${LIME}${FUNCNAME[0]}${RED} needs five parameters: ${YELLOW}(1)AMI ID, (2) INSTANCE TYPE, (3) KEY_NAME, (4) SUBNET_ID, (5) SECURITY_GROUP_ID"
+    ERROR_CODE="1"
+    failed
+  else
+    AMI_ID=${1}
+    INSTANCE_TYPE=${2}
+    USER_KEYNAME=${3}
+    NET_ID=${4}
+    SEC_GROUP_ID=${5}
+  fi
+  inf "${MAGENTA}Creating new instance based on AMI: ${YELLOW}${AMI_ID}${MAGENTA} and instance_type ${LIME}${INSTANCE_TYPE}${MAGENTA} in ${DARK_GREEN}${SEC_GROUP_ID}${MAGENTA} security group ID"
+  aws ${AWS_PROFILE_USE_CHECK[*]} ec2 run-instances --image-id ${AMI_ID} --count 1 --instance-type ${INSTANCE_TYPE} --key-name ${USER_KEYNAME} --subnet-id ${NET_ID} --security-group-ids ${SEC_GROUP_ID} > "${TMP}/${AWS_INSTANCES_DETAILS}_run_full.json" 2>"${LOG}/${AWS_INSTANCES_DETAILS}_run.log" & CREATE_INSTANCE_PID="$!"
+  while [[ -n $(jobs -r) ]]
+  do
+    for NUMBER in {1..100}
+    do
+      sleep 0.1
+      ProgressBar ${NUMBER} 100
+    done
+    printf '\n'
+    ERROR_CODE="$?"
+    if [ ${ERROR_CODE} -ne 0 ]
+    then
+      error "  Instance cannot be created, exiting"
+      debug "    LOG FILE: ${YELLOW}${LOG}/${AWS_INSTANCES_DETAILS}_run.log"
+      debug "      $(cat "${LOG}/${AWS_INSTANCES_DETAILS}_run.log")"
+      failed
+    fi
+  done
+  AWS_INSTANCE_DETAILS_PUBLIC_IP=$(jq -r '.Instances[].PublicIpAddress' "${TMP}/${AWS_INSTANCES_DETAILS}_run_full.json")
+  AWS_INSTANCE_DETAILS_IP=$(jq -r '.Instances[].PrivateIpAddress' "${TMP}/${AWS_INSTANCES_DETAILS}_run_full.json")
+  AWS_INSTANCE_DETAILS_ID=$(jq -r '.Instances[].InstanceId' "${TMP}/${AWS_INSTANCES_DETAILS}_run_full.json")
+  aws ${AWS_PROFILE_USE_CHECK[*]} ec2 describe-instances > "${TMP}/${AWS_INSTANCES_DETAILS}_full.json" 2>"${LOG}/${AWS_INSTANCES_DETAILS}.log"
+}
+
+aws_instance_monitoring()
+{
+  if [ $# -ne 1 ]
+  then
+    error "Function ${LIME}${FUNCNAME[0]}${RED} needs one parameter: ${YELLOW}(1)INSTANCE ID"
+    ERROR_CODE="1"
+    failed
+  else
+    INSTANCE_ID=${1}
+  fi
+  INSTANCE_MONITORING_CHECK=$(jq -r --arg instance_id ${INSTANCE_ID} '.Reservations[].Instances[] | select(.InstanceId == $instance_id) | .Monitoring.State' "${TMP}/${AWS_INSTANCES_DETAILS}_full.json")
+  if [[ ${INSTANCE_MONITORING_CHECK} == "disabled" ]]
+  then
+    inf "  Enabling instance ${YELLOW}${INSTANCE_ID}${ORANGE} monitoring"
+    aws ${AWS_PROFILE_USE_CHECK[*]} ec2 monitor-instances --instance-ids ${INSTANCE_ID} > "${TMP}/${AWS_INSTANCES_DETAILS}_monitoring_enable.json" 2>"${LOG}/${AWS_INSTANCES_DETAILS}_monitoring_enable.log"
+    ERROR_CODE="$?"
+    if [ ${ERROR_CODE} -ne 0 ]
+    then
+      error "    Instance ${YELLOW}${INSTANCE_ID}${ORANGE} monitoring${RED} cannot be enabled..."
+      debug "      LOG FILE: ${YELLOW}${LOG}/${AWS_INSTANCES_DETAILS}_monitoring_enable.log"
+      debug "        $(cat "${LOG}/${AWS_INSTANCES_DETAILS}_monitoring_enable.log")"
+    fi
+  elif [[ ${INSTANCE_MONITORING_CHECK} == "enabled" ]]
+  then
+    inf "    ${ORANGE}Monitoring${CYAN} of instance ${YELLOW}${INSTANCE_ID}${CYAN} is already enabled"
+  else
+    warn "    ${ORANGE}Monitoring${CYAN} of instance is in state: ${ORANGE}${INSTANCE_MONITORING_CHECK}"
   fi
 }
 
@@ -722,7 +811,7 @@ aws_snapshot_removal()
         ERROR_CODE="$?"
         if [ ${ERROR_CODE} -eq 0 ]
         then
-          inf "        ${WINE}Snapshot: ${YELLOW}${AWS_SNAPSHOT_ID}${WINE} removed properly"
+          inf "      ${WINE}Snapshot: ${YELLOW}${AWS_SNAPSHOT_ID}${WINE} removed properly"
           SLACK_REMOVE_VOLUME="
             {\\\"channel\\\": \\\"${SLACK_CHANNEL_AWS}\\\"
               , \\\"username\\\": \\\"${USER}\\\"
